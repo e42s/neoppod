@@ -302,9 +302,11 @@ class MySQLDatabaseManager(DatabaseManager):
                                     " FROM trans GROUP BY `partition`")}
         obj = {partition: p64(tid)
             for partition, tid in q("SELECT `partition`, MAX(tid)"
-                                    " FROM obj GROUP BY `partition`")}
-        oid = q("SELECT MAX(oid) FROM (SELECT MAX(oid) AS oid FROM obj"
-                                      " GROUP BY `partition`) as t")[0][0]
+                                    " FROM obj FORCE INDEX(PRIMARY)"
+                                    " GROUP BY `partition`")}
+        oid = q("SELECT MAX(oid) FROM ("
+                "SELECT MAX(oid) AS oid FROM obj FORCE INDEX(`partition`)"
+                " GROUP BY `partition`) as t")[0][0]
         return trans, obj, None if oid is None else p64(oid)
 
     def _getUnfinishedTIDDict(self):
@@ -324,6 +326,7 @@ class MySQLDatabaseManager(DatabaseManager):
     def getLastObjectTID(self, oid):
         oid = util.u64(oid)
         r = self.query("SELECT tid FROM obj"
+                       " FORCE INDEX(`partition`)"
                        " WHERE `partition`=%d AND oid=%d"
                        " ORDER BY tid DESC LIMIT 1"
                        % (self._getPartition(oid), oid))
@@ -390,6 +393,7 @@ class MySQLDatabaseManager(DatabaseManager):
                             raise
 
     def dropPartitions(self, offset_list):
+        return # ivan disable old partition clean up
         q = self.query
         # XXX: these queries are inefficient (execution time increase with
         # row count, although we use indexes) when there are rows to
@@ -397,7 +401,7 @@ class MySQLDatabaseManager(DatabaseManager):
         for partition in offset_list:
             where = " WHERE `partition`=%d" % partition
             data_id_list = [x for x, in
-                q("SELECT DISTINCT data_id FROM obj USE INDEX(PRIMARY)" + where)
+                q("SELECT DISTINCT data_id FROM obj FORCE INDEX(PRIMARY)" + where)
                 if x]
             if not self._use_partition:
                 q("DELETE FROM obj" + where)
@@ -543,6 +547,7 @@ class MySQLDatabaseManager(DatabaseManager):
 
     def _getDataTID(self, oid, tid=None, before_tid=None):
         sql = ('SELECT tid, value_tid FROM obj'
+               ' FORCE INDEX(`partition`)'
                ' WHERE `partition` = %d AND oid = %d'
               ) % (self._getPartition(oid), oid)
         if tid is not None:
@@ -649,7 +654,7 @@ class MySQLDatabaseManager(DatabaseManager):
         u64 = util.u64
         p64 = util.p64
         min_tid = u64(min_tid)
-        r = self.query('SELECT tid, oid FROM obj'
+        r = self.query('SELECT tid, oid FROM obj FORCE INDEX(PRIMARY)'
                        ' WHERE `partition` = %d AND tid <= %d'
                        ' AND (tid = %d AND %d <= oid OR %d < tid)'
                        ' ORDER BY tid ASC, oid ASC LIMIT %d' % (
@@ -715,7 +720,8 @@ class MySQLDatabaseManager(DatabaseManager):
         q = self.query
         self._setPackTID(tid)
         for count, oid, max_serial in q("SELECT COUNT(*) - 1, oid, MAX(tid)"
-                                        " FROM obj WHERE tid <= %d GROUP BY oid"
+                                        " FROM obj FORCE INDEX(`partition`)"
+                                        " WHERE tid <= %d GROUP BY oid"
                                         % tid):
             partition = getPartition(oid)
             if q("SELECT 1 FROM obj WHERE `partition` = %d"
@@ -765,7 +771,7 @@ class MySQLDatabaseManager(DatabaseManager):
         # last grouped value, instead of the greatest one.
         r = self.query(
             """SELECT tid, oid
-               FROM obj
+               FROM obj FORCE INDEX(PRIMARY)
                WHERE `partition` = %(partition)s
                  AND tid <= %(max_tid)d
                  AND (tid > %(min_tid)d OR
