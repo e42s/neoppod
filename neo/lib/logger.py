@@ -131,7 +131,7 @@ class NEOLogger(Logger):
                         raise
             sys.stderr.write(' ok\n')
 
-    def backlog(self, max_size=1<<24, max_packet=None):
+    def backlog(self, max_size=1<<28, max_packet=None):
         with self:
             self._max_packet = max_packet
             self._max_size = max_size
